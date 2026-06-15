@@ -1,0 +1,34 @@
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/*.lock.hcl
+terraform/terraform.tfvars
+terraform/*.backup
+terraform/info
+*.tfstate*
+*.tfstate.backup
+*.tfplan
+*.backup
+
+# Secrets
+terraform/secrets*
+
+# SSH / kubeconfig
+*.pem
+*.key
+kubeconfig*
+config.k8s-lab
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Secrets & env
+*.env
+.env
+
+# Internal dev artifacts
+REVIEW.md
+terraform-tuto.md
