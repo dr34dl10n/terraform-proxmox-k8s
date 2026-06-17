@@ -1,21 +1,23 @@
 #!/usr/bin/env bash
 # =============================================================
 # join-workers.sh — Joint les workers au cluster Kubernetes
-# Usage: ./join-workers.sh [CP_IP] [W1_IP W2_IP ...]
+# Usage: ./join-workers.sh [CP_IP] [W1_IP] [W2_IP]
 # =============================================================
 set -euo pipefail
 
-# --- Config (from common.sh: terraform output preferred, tfvars fallback) ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+TFVARS="${PROJECT_DIR}/terraform/terraform.tfvars"
 
-# CLI overrides
-if [ -n "${1:-}" ]; then
-  CP_IP="$1"
-  shift
-fi
-if [ $# -gt 0 ]; then
-  WORKER_IPS="$*"
+# --- Récupérer les IPs ---
+if [ -f "$TFVARS" ]; then
+  CP_IP=$(grep -E '^control_plane_ip' "$TFVARS" | sed 's/.*=.*"\(.*\)".*/\1/' | tr -d '"')
+  WORKER_IPS=$(grep -E '^worker_ips' "$TFVARS" | sed 's/.*=.*\[\(.*\)\].*/\1/' | tr -d '"' | tr ',' ' ')
+  SSH_USER=$(grep -E '^ssh_user' "$TFVARS" | sed 's/.*=.*"\(.*\)".*/\1/' | tr -d '"' || echo "ubuntu")
+else
+  CP_IP="${1:-192.168.1.231}"
+  WORKER_IPS="${2:-192.168.1.232} ${3:-192.168.1.233}"
+  SSH_USER="ubuntu"
 fi
 
 echo "================================================"
@@ -45,9 +47,6 @@ for W_IP in $WORKER_IPS; do
   # Vérifier que cloud-init est fini
   ssh "${SSH_USER}@${W_IP}" "cloud-init status --wait" 2>/dev/null || true
 
-  # Remplacer l'IP dans la config kubeadm join
-  ssh "${SSH_USER}@${W_IP}" "sudo sed -i 's/CP_IP_REPLACE/${CP_IP}/g' /etc/kubeadm/kubeadm-config.yaml" 2>/dev/null || true
-
   # Exécuter le join
   ssh "${SSH_USER}@${W_IP}" "sudo ${JOIN_CMD}" 2>&1
 
@@ -64,7 +63,7 @@ done
 echo "================================================"
 echo "🎉 Workers joints ! Vérification :"
 echo ""
-echo "  ssh ${SSH_USER}@${CP_IP} 'kubectl get nodes'"
+echo "  ssh ${SSH_USER}@${CP_IP} 'KUBECONFIG=/etc/kubernetes/admin.conf kubectl get nodes'"
 echo ""
 echo "  Tous les nœuds doivent passer en 'Ready'"
 echo "  (ça peut prendre ~1-2 min pour le CNI Calico)"

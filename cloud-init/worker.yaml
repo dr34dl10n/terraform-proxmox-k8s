@@ -1,0 +1,9 @@
+#cloud-config
+# =============================================================
+# Cloud-Init Worker
+# Rien de spécifique — le commun fait tout le travail
+# Les workers recevront la commande kubeadm join manuellement
+# =============================================================
+
+runcmd:
+  - echo "✅ Worker cloud-init: DONE — en attente de kubeadm join"

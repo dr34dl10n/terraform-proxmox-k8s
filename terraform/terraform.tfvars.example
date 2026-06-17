@@ -1,38 +1,32 @@
 # =============================================================
-# Terraform variables — Copiez ce fichier en terraform.tfvars
-#   cp terraform.tfvars.example terraform.tfvars
-# Puis éditez avec vos valeurs.
-#
-# ⚠️  Les SECRETS (api_token) ne sont PAS dans ce fichier.
-#     Ils sont dans .env (source .env) via les variables TF_VAR_*
-#     Le fichier .env est EXCLU du git.
+# Terraform variables — Éditez ce fichier avec vos valeurs
 # =============================================================
 
 # --- Connexion Proxmox ---
-proxmox_api_url  = "https://192.168.1.2:8006"
-# proxmox_api_token est fourni via TF_VAR_proxmox_api_token dans .env
+proxmox_api_url    = "https://192.168.1.10:8006"
+proxmox_user       = "root@pam"
+proxmox_password   = ""
+proxmox_api_token  = "root@pam!terraform=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
 
 # --- Cluster ---
 cluster_name       = "k8s"
 proxmox_node       = "pve"
-template_vm_id     = 9001
+template_vm_id     = 9000
 
-# --- Réseau VMs (192.168.1.0/24 — même LAN, pas de NAT nécessaire) ---
+# --- Réseau — ADAPTER À VOTRE ENVIRONNEMENT ---
 vm_bridge          = "vmbr0"
 vm_network_cidr    = "192.168.1.0/24"
 vm_gateway         = "192.168.1.1"
-vm_dns_servers     = ["1.1.1.1", "1.0.0.1"]
 control_plane_ip   = "192.168.1.231"
 worker_ips         = ["192.168.1.232", "192.168.1.233"]
 
-# --- Ressources VM (ajustées pour 4 cœurs / 16 Go RAM hôte) ---
-control_plane_cores  = 2
-control_plane_memory = 4096    # Mo
-worker_cores         = 1
-worker_memory        = 2048    # Mo
-vm_disk_size         = 20     # Go
+# --- Ressources VM ---
+control_plane_cores  = 4
+control_plane_memory = 4096   # Mo
+worker_cores         = 2
+worker_memory        = 4096   # Mo
+vm_disk_size         = 30     # Go
 vm_disk_storage      = "local-lvm"
-snippets_storage     = "local"
 
 # --- SSH — collez votre clé publique ---
 ssh_public_key      = "ssh-ed25519 AAAA... votre@machine"

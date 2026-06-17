@@ -40,11 +40,21 @@ sudo kubeadm init \
   --upload-certs \
   2>&1 | sudo tee /var/log/kubeadm-init.log
 
-# Configurer kubeconfig pour l'utilisateur non-root
+# Configurer kubeconfig pour l'utilisateur ubuntu ET pour root
 mkdir -p "$HOME/.kube"
 sudo cp /etc/kubernetes/admin.conf "$HOME/.kube/config"
 sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
-echo "✅ kubeconfig configuré dans $HOME/.kube/config"
+
+# KUBECONFIG pour root (indispensable pour les scripts de diagnostic)
+sudo mkdir -p /root/.kube
+sudo cp /etc/kubernetes/admin.conf /root/.kube/config
+sudo chown root:root /root/.kube/config
+
+# Variable d'env KUBECONFIG globale (pour root et ubuntu)
+echo 'export KUBECONFIG=/etc/kubernetes/admin.conf' | sudo tee /etc/profile.d/kubeconfig.sh > /dev/null
+sudo chmod +x /etc/profile.d/kubeconfig.sh
+
+echo "✅ kubeconfig configuré (ubuntu + root + /etc/profile.d)"
 INIT_EOF
 
 echo ""
@@ -53,12 +63,25 @@ echo "✅ kubeadm init terminé !"
 # --- 4. Installer le CNI (Calico) ---
 echo "🌐 Installation du CNI Calico..."
 ssh "${SSH_USER}@${CP_IP}" << 'CNI_EOF'
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
 kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/custom-resources.yaml
 echo "✅ Calico CNI installé"
 CNI_EOF
 
-# --- 5. Afficher la commande join ---
+# --- 5. Installer le metrics-server ---
+echo "📊 Installation du metrics-server..."
+ssh "${SSH_USER}@${CP_IP}" << 'METRICS_EOF'
+export KUBECONFIG=/etc/kubernetes/admin.conf
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# Patch : kubelet-insecure-tls nécessaire en lab (certs auto-signés)
+kubectl patch deploy metrics-server -n kube-system --type=json -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]' 2>/dev/null || true
+echo "✅ metrics-server installé"
+METRICS_EOF
+
+# --- 6. Afficher la commande join ---
 echo ""
 echo "================================================"
 echo "🎉 Cluster initialisé ! Prochaines étapes :"

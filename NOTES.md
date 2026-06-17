@@ -126,10 +126,11 @@ terraform taint       # Force la recréation d'une ressource
 │  │  2 vCPU   │  │  1 vCPU   │  │  1 vCPU   │          │
 │  │  4 Go RAM  │  │  2 Go RAM │  │  2 Go RAM │          │
 │  │  20 Go SSD │  │  20 Go SSD│  │  20 Go SSD│          │
-│  │ 192.168.1.231│ │ 192.168.1.232│ │ 192.168.1.233│         │
+│  │ 192.168.1.231│  │ 192.168.1.232│ │ 192.168.1.233│         │
 │  └───────────┘  └───────────┘  └───────────┘          │
 │         └──────────────┼──────────────┘                │
-│            vmbr0 (192.168.1.0/24)                       │
+│            vmbr0 (192.168.1.0/24 — LAN)              │
+│            Accès direct LAN → internet                │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -138,12 +139,13 @@ terraform taint       # Force la recréation d'une ressource
 | Variable | Valeur | Description |
 |---|---|---|
 | `proxmox_api_url` | `https://192.168.1.2:8006` | URL API Proxmox |
+| `proxmox_user` | `root@pam` | Utilisateur API |
 | `proxmox_api_token` | *(via .env `TF_VAR_proxmox_api_token`)* | Token API |
 | `cluster_name` | `k8s` | Préfixe noms de VMs |
 | `proxmox_node` | `pve` | Nœud Proxmox |
 | `template_vm_id` | `9000` | ID du template cloud-init |
 | `vm_bridge` | `vmbr0` | Bridge réseau |
-| `vm_network_cidr` | `192.168.1.0/24` | Sous-réseau VMs (même LAN) |
+| `vm_network_cidr` | `192.168.1.0/24` | Sous-réseau VMs (LAN) |
 | `vm_gateway` | `192.168.1.1` | Passerelle (routeur du LAN) |
 | `vm_dns_servers` | `1.1.1.1, 1.0.0.1` | DNS |
 | `control_plane_ip` | `192.168.1.231` | IP fixe CP |
@@ -165,7 +167,7 @@ terraform taint       # Force la recréation d'une ressource
 | **Version K8s** | v1.31 |
 | **CRI** | containerd (SystemdCgroup = true) |
 | **Cgroup driver** | systemd |
-| **CNI** | Calico v3.28 |
+| **CNI** | Calico v3.27 |
 | **Pod CIDR** | 10.244.0.0/16 (overlay K8s, pas le LAN) |
 | **Service CIDR** | 10.96.0.0/12 |
 | **Pause image** | registry.k8s.io/pause:3.9 |
@@ -186,12 +188,10 @@ Internet ←→ 192.168.1.x (LAN)
                 ↑
             Proxmox (pve)
             192.168.1.2/24
-            192.168.1.1 (routeur du LAN)
-            Pas de NAT nécessaire
                 ↑
     ┌──────────┼──────────┐
   k8s-cp    k8s-w1    k8s-w2
-  .231       .232        .233
+  .231       .232       .233
 ```
 
 ### Workflow de déploiement
@@ -217,6 +217,6 @@ Internet ←→ 192.168.1.x (LAN)
 3. ✅ Cloud-init snippets uploadés via `proxmox_virtual_environment_file` + `user_data_file_id`
 4. ✅ Fichier `terraform/info` supprimé → `.env` avec `TF_VAR_*`
 5. ✅ `terraform.tfvars` exclu du git via `.gitignore`
-6. ✅ IPs changées : `172.16.1.x` (isolé + NAT) → `192.168.1.231-233` (LAN direct, pas de NAT)
+6. ✅ IPs sur le LAN : `192.168.1.231/.232/.233` (pas de NAT nécessaire)
 7. ✅ Specs VM ajustées aux ressources du Proxmox (4 vCPU / 16 Go RAM)
 8. ✅ Anciens fichiers cloud-init (common.yaml, etc.) remplacés par les versions combinées

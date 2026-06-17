@@ -37,7 +37,8 @@ write_files:
       br_netfilter
 
   # --- Paramètres sysctl pour le networking Kubernetes ---
-  - path: /etc/sysctl.d/99-kubernetes.conf
+  # /etc/sysctl.d/k8s.conf  — nom attendu par kubeadm et les scripts de check
+  - path: /etc/sysctl.d/k8s.conf
     content: |
       net.bridge.bridge-nf-call-iptables  = 1
       net.bridge.bridge-nf-call-ip6tables = 1
@@ -50,6 +51,22 @@ write_files:
       image-endpoint: unix:///run/containerd/containerd.sock
       timeout: 10
       debug: false
+
+  # --- containerd config (écrit AVANT runcmd pour être présent dès l'install) ---
+  - path: /etc/containerd/config.toml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      version = 2
+      [plugins]
+        [plugins."io.containerd.grpc.v1.cri"]
+          sandbox_image = "registry.k8s.io/pause:3.9"
+          [plugins."io.containerd.grpc.v1.cri".containerd]
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+              runtime_type = "io.containerd.runc.v2"
+              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                SystemdCgroup = true
 %{ if is_control_plane }
 
   # --- Config kubeadm pour init ---
@@ -114,10 +131,13 @@ runcmd:
   - swapoff -a
   - sed -i '/swap/d' /etc/fstab
 
+  # --- Configurer containerd AVANT l'install (write_files se produit avant runcmd) ---
+  # Le fichier est écrit via write_files ci-dessous pour garantir sa présence.
+
   # --- Installer containerd ---
   - apt-get install -y containerd
 
-  # --- Configurer containerd après l'install (évite l'écrasement par apt) ---
+  # --- Ré-écrire la config containerd (apt peut écraser notre fichier) ---
   - |
     cat > /etc/containerd/config.toml <<CONTAINERD_EOF
     version = 2
@@ -151,10 +171,23 @@ runcmd:
   # --- Activer kubelet ---
   - systemctl enable kubelet
 
-  # --- Activer bash-completion pour kubectl ---
+  # --- Configurer KUBECONFIG global (root + ubuntu) ---
+  - mkdir -p /root/.kube
+  - mkdir -p /home/ubuntu/.kube
+
+  # --- Activer bash-completion pour kubectl (ubuntu + root) ---
   - echo 'source <(kubectl completion bash)' >> /home/ubuntu/.bashrc
   - echo 'alias k=kubectl' >> /home/ubuntu/.bashrc
   - echo 'complete -o default -F __start_kubectl k' >> /home/ubuntu/.bashrc
+  - echo 'source <(kubectl completion bash)' >> /root/.bashrc
+  - echo 'alias k=kubectl' >> /root/.bashrc
+  - echo 'complete -o default -F __start_kubectl k' >> /root/.bashrc
+
+  # --- Installer etcdctl (outil de diagnostic CKA) ---
+  # Version fixe pour la reproductibilité (v3.5.17 = dernière stable)
+  - |
+    ETCDCTL_VER="3.5.17"
+    curl -sL "https://github.com/etcd-io/etcd/releases/download/v$${ETCDCTL_VER}/etcd-v$${ETCDCTL_VER}-linux-amd64.tar.gz" | tar xz -C /tmp && cp "/tmp/etcd-v$${ETCDCTL_VER}-linux-amd64/etcdctl" /usr/local/bin/ && chmod +x /usr/local/bin/etcdctl && echo "✅ etcdctl v$${ETCDCTL_VER} installé"
 
   # --- Message de fin ---
   - echo "========================================="

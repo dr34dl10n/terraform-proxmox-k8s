@@ -1,323 +1,722 @@
-# Lab Kubernetes sur Proxmox via Terraform
+# 🏗️ Lab Kubernetes sur Proxmox via Terraform
 
-<div align="center">
-
-![Kubernetes](https://img.shields.io/badge/Kubernetes-1.31-326CE5?logo=kubernetes&logoColor=white)
-![Proxmox VE](https://img.shields.io/badge/Proxmox_VE-≥8.0-E57000?logo=proxmox&logoColor=white)
-![Terraform](https://img.shields.io/badge/Terraform-≥1.5-7B42BC?logo=terraform&logoColor=white)
-![Cloud‑Init](https://img.shields.io/badge/Cloud_Init-✓-18A4E0?logo=cloudinit&logoColor=white)
-![kubeadm](https://img.shields.io/badge/kubeadm-✓-326CE5?logo=kubernetes&logoColor=white)
-![Calico](https://img.shields.io/badge/Calico-3.28-F39221?logo=projectcalico&logoColor=white)
-![containerd](https://img.shields.io/badge/containerd-✓-5F6368?logo=containerd&logoColor=white)
-![CKA](https://img.shields.io/badge/CKA-Exam_Prep-00A19A?logo=kubernetes&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green?logo=opensourceinitiative&logoColor=white)
-
-</div>
-
-> Provisionnement automatique d'un cluster K8s de test : **1 Control Plane + 2 Workers**
+> Provisionnement automatique d'un cluster K8s de test : **1 Control Plane + 2 Workers**  
 > sur Proxmox VE avec Terraform + Cloud-Init + kubeadm
 
 ---
 
-## Architecture Cible
+## 📋 Architecture Cible
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Proxmox VE (pve)                      │
-│                   4 vCPU / 16 Go RAM                    │
-│                                                         │
-│  vmbr0 : 192.168.1.2/24 (LAN)                          │
-│        (VMs sur le même LAN, pas de NAT nécessaire)      │
-│                                                         │
-│  ┌───────────┐  ┌───────────┐  ┌───────────┐          │
-│  │  k8s-cp   │  │  k8s-w1   │  │  k8s-w2   │          │
-│  │  (CP)     │  │  (Worker) │  │  (Worker) │          │
-│  │  2 vCPU   │  │  1 vCPU   │  │  1 vCPU   │          │
-│  │  4 Go RAM  │  │  2 Go RAM │  │  2 Go RAM │          │
-│  │  20 Go SSD │  │  20 Go SSD│  │  20 Go SSD│          │
-│  │ 192.168.1.231│  │ 192.168.1.232│ │ 192.168.1.233│         │
-│  └───────────┘  └───────────┘  └───────────┘          │
-│         └──────────────┼──────────────┘                │
-│            vmbr0 (192.168.1.0/24 — LAN)              │
-│            Accès direct LAN → internet                │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│              Proxmox VE Host                     │
+│                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────┐│
+│  │  k8s-cp      │  │  k8s-w1      │  │ k8s-w2   ││
+│  │  (Control    │  │  (Worker)    │  │ (Worker)  ││
+│  │   Plane)     │  │              │  │          ││
+│  │  4 vCPU      │  │  2 vCPU      │  │ 2 vCPU   ││
+│  │  4 Go RAM    │  │  4 Go RAM    │  │ 4 Go RAM  ││
+│  │  30 Go disk  │  │  30 Go disk  │  │ 30 Go dk ││
+│  │  192.168.1.231│  │  192.168.1.232│  │192.168.1.233│
+│  └──────────────┘  └──────────────┘  └──────────┘│
+│          │                │               │      │
+│          └────────────────┼───────────────┘      │
+│                  vmbr0 (bridge)                    │
+└─────────────────────────────────────────────────┘
 ```
-
-**Réseau :** Les VMs sont sur `192.168.1.0/24`, même LAN que le Proxmox.
-Pas de NAT nécessaire — les VMs accèdent directement à internet via la gateway du LAN.
-Le Pod CIDR K8s est `10.244.0.0/16` (pour éviter le chevauchement avec le LAN `192.168.1.x`).
 
 ---
 
-## Table des matières
+## 📑 Table des matières
 
-1. [Prérequis](#prérequis)
-2. [Arborescence du projet](#arborescence-du-projet)
-3. [Préparation Proxmox](#préparation-proxmox)
-4. [Configuration Terraform](#configuration-terraform)
-5. [Cloud-Init](#cloud-init-préparation-des-nœuds)
-6. [Déploiement](#déploiement)
-7. [Initialisation du cluster](#initialisation-du-cluster-kubeadm)
-8. [Joindre les Workers](#joindre-les-workers)
-9. [Vérification](#vérification)
-10. [Destruction du lab](#destruction-du-lab)
-11. [Troubleshooting](#troubleshooting)
+1. [Prérequis](#-prérequis)
+2. [Arborescence du projet](#-arborescence-du-projet)
+3. [Préparation Proxmox](#-préparation-proxmox)
+4. [Configuration Terraform](#-configuration-terraform)
+5. [Cloud-Init (préparation des nœuds)](#-cloud-init-préparation-des-nœuds)
+6. [Déploiement](#-déploiement)
+7. [Initialisation du cluster (kubeadm)](#-initialisation-du-cluster-kubeadm)
+8. [Joindre les Workers](#-joindre-les-workers)
+9. [Vérification](#-vérification)
+10. [Post-install (CNI, Ingress, etc.)](#-post-install)
+11. [Destruction du lab](#-destruction-du-lab)
+12. [Troubleshooting](#-troubleshooting)
 
 ---
 
-## Prérequis
+## 🔧 Prérequis
 
-### Machine locale
+### Machine locale (from laquelle vous lancez Terraform)
 
 | Outil | Version | Installation |
 |-------|---------|-------------|
-| **Terraform** | ≥ 1.5 | [terraform.io](https://developer.hashicorp.com/terraform/downloads) |
-| **SSH client** | — | Déjà présent |
+| **Terraform** | ≥ 1.5 | `brew install terraform` ou [terraform.io](https://developer.hashicorp.com/terraform/downloads) |
+| **SSH client** | — | Normalement déjà présent |
 | **kubectl** | ≥ 1.29 | `curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"` |
 
 ### Côté Proxmox
 
 | Prérequis | Détail |
 |-----------|--------|
-| **Proxmox VE** | ≥ 8.0 (testé sur 9.1) |
-| **Template VM Cloud-Init** | Ubuntu 22.04/24.04 avec cloud-init + qemu-guest-agent (ID 9001) |
-| **API Token** | Token Terraform avec droits `PVEVMAdmin` |
-| **Réseau LAN** | VMs en 192.168.1.231-233, pas de NAT |
-| **Storage** | `local-lvm` pour les disques, `local` pour les snippets |
+| **Proxmox VE** | ≥ 8.0 (testé sur 8.x) |
+| **Template VM Cloud-Init** | Une VM template Ubuntu 22.04/24.04 avec cloud-init (voir section dédiée) |
+| **API Token** | Un token Terraform avec droits `PVEVMAdmin` sur le noeud |
+| **Bridge réseau** | `vmbr0` configuré (ou adapter dans les variables) |
+| **Storage** | `local-lvm` ou équivalent pour les disques VM |
 
 ---
 
-## Arborescence du projet
+## 📁 Arborescence du projet
 
 ```
 proxmox-k8s-lab/
-├── README.md
-├── NOTES.md                          # Rappel Terraform + paramètres cluster
-├── .env                              # Secrets (TF_VAR_proxmox_api_token) — EXCLU du git
-├── .gitignore
+├── README.md                        # ← vous êtes ici
 ├── terraform/
-│   ├── main.tf                       # Ressources VM Proxmox + upload snippets
+│   ├── main.tf                      # Ressources VM Proxmox
 │   ├── variables.tf                  # Déclarations de variables
-│   ├── outputs.tf                    # Sorties (IPs, commandes SSH)
-│   ├── providers.tf                  # Provider Proxmox (bpg >= 0.70)
+│   ├── outputs.tf                    # Sorties (IPs, commandes)
+│   ├── providers.tf                 # Provider Proxmox
 │   └── terraform.tfvars.example      # Exemple de fichier de vars
 ├── cloud-init/
-│   └── user-data.yaml.tpl            # Template unique cloud-init (CP + Workers)
+│   ├── common.yaml                  # Préparation commune à tous les nœuds
+│   ├── control-plane.yaml           # Spécifique au Control Plane
+│   └── worker.yaml                  # Spécifique aux Workers
 └── scripts/
-    ├── common.sh                    # Config partagée (terraform output + tfvars fallback)
-    ├── init-control-plane.sh         # kubeadm init + Calico
-    ├── join-workers.sh               # kubeadm join
-    ├── copy-kubeconfig.sh            # Récupérer kubeconfig localement
-    └── destroy-cluster.sh             # Nettoyage complet
+    ├── init-control-plane.sh        # kubeadm init + Calico
+    ├── join-workers.sh             # kubeadm join
+    ├── copy-kubeconfig.sh           # Récupérer kubeconfig locally
+    └── destroy-cluster.sh           # Nettoyage complet
 ```
 
 ---
 
-## Préparation Proxmox
+## 🛠️ Préparation Proxmox
 
 ### 1. Créer un API Token pour Terraform
 
 Depuis l'interface Proxmox Web UI :
 
 1. **Datacenter → Permissions → API Tokens**
-2. Cliquer **Add** → Utilisateur `root@pam`, ID `terraform`
-3. **Décocher "Privilege Separation"**
-4. Copier le Secret (affiché une seule fois !)
+2. Cliquer **Add**
+3. Sélectionner l'utilisateur `root@pam` (ou créer un utilisateur dédié)
+4. Donner un ID : `terraform`
+5. ⚠️ **Décocher "Privilege Separation"** si vous voulez que le token hérite des droits de l'utilisateur
+6. **Copier le Secret** (il ne sera affiché qu'une seule fois !)
 
 Ou en CLI :
 ```bash
 pveum user token add root@pam terraform --privsep 0
 ```
 
-Stocker le token dans `.env` :
-```bash
-export TF_VAR_proxmox_api_token="root@pam!tokenid=secret"
-```
-
 ### 2. Assigner les permissions
 
 ```bash
 pveum acl modify / --users root@pam --roles PVEVMAdmin
+# Ou pour un utilisateur dédié :
+# pveum role add Terraform -privs "VM.Allocate VM.Console VM.Config.CDROM VM.Config.CPU VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.Monitor VM.PowerMgmt SDN.Use Sys.Audit Sys.Console"
+# pveum acl modify / --users terraform@pve --roles Terraform
 ```
 
-### 3. Configurer le réseau (bridge LAN)
+### 3. Créer le template Cloud-Init Ubuntu
 
-Les VMs sont sur le même LAN (`192.168.1.0/24`) que le Proxmox via `vmbr0`.
-Pas de configuration réseau supplémentaire nécessaire — le bridge est déjà en place.
-
-Vérifier que `vmbr0` est bien connecté au réseau physique et que le forwarding IP est activé :
+C'est l'étape la plus importante. Ce template sera cloné par Terraform pour chaque nœud.
 
 ```bash
-# Vérifier le forwarding
-sysctl net.ipv4.ip_forward
-# Si nécessaire :
-sysctl -w net.ipv4.ip_forward=1
-```
+# Sur le host Proxmox, en SSH :
 
-### 4. Activer les snippets sur le storage `local`
-
-```bash
-pvesm set local --content iso,vmtmpl,backup,snippets
-```
-
-Ou via Web UI : Datacenter → Storage → `local` → Edit → cocher **Snippets**.
-
-Vérifier :
-```bash
-ls /var/lib/vz/snippets/
-```
-
-### 5. Créer le template Cloud-Init Ubuntu
-
-```bash
+# 1. Télécharger l'image Ubuntu Cloud (22.04 LTS recommandé)
 cd /tmp
-wget https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+wget https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img
 
-# Installer qemu-guest-agent dans l'image
+# 2. Installer libguestfs-tools pour自定义 l'image (optionnel mais recommandé)
 apt install -y libguestfs-tools
-virt-customize -a ubuntu-24.04-server-cloudimg-amd64.img --install qemu-guest-agent
 
-# Créer la VM template
-qm create 9001 \
-  --name "ubuntu-2404-cloudinit" \
-  --memory 2048 --cores 2 --sockets 1 \
+# 3. Installer qemu-guest-agent dans l'image (nécessaire pour que Terraform attende l'IP)
+virt-customize -a ubuntu-22.04-server-cloudimg-amd64.img \
+  --install qemu-guest-agent
+
+# 4. Créer la VM template
+qm create 9000 --name "ubuntu-2204-cloudinit" --memory 2048 --cores 2 \
   --net0 virtio,bridge=vmbr0 \
-  --ostype l24 \
-  --agent 1 \
-  --cpu host \
-  --scsihw virtio-scsi-pci \
-  --boot order=scsi0 \
-  --serial0 socket --vga serial0
+  --disk local-lvm:0,import-from=/tmp/ubuntu-22.04-server-cloudimg-amd64.img
 
-# Importer le disque
-qm importdisk 9001 /tmp/ubuntu-24.04-server-cloudimg-amd64.img local-lvm --format qcow2
+# 5. Configurer cloud-init sur la VM
+qm set 9000 --ciuser ubuntu
+qm set 9000 --sshkeys ~/.ssh/authorized_keys    # votre clé SSH publique
+qm set 9000 --agent enabled=1
 
-# Configurer le disque attaché
-qm set 9001 --scsi0 local-lvm:vm-9001-disk-0
-qm set 9001 --boot order=scsi0
+# 6. Ajouter un CDROM pour cloud-init (nécessaire)
+qm set 9000 --scsi2 local-lvm:cloudinit
 
-# Configurer cloud-init
-qm set 9001 --ciuser ubuntu
-qm set 9001 --sshkeys ~/.ssh/authorized_keys
-qm set 9001 --scsi2 local-lvm:cloudinit
+# 7. Convertir en template
+qm template 9000
 
-# Convertir en template
-qm template 9001
-echo "Template VM 9001 prêt !"
+echo "✅ Template VM 9000 prêt !"
+```
+
+> 💡 **Note :** Si vous préférez Ubuntu 24.04, remplacez `22.04` par `24.04` dans l'URL.
+
+---
+
+## ⚙️ Configuration Terraform
+
+### providers.tf
+
+```hcl
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    proxmox = {
+      source  = "bpg/proxmox"
+      version = "~> 0.60"
+    }
+  }
+}
+
+provider "proxmox" {
+  endpoint  = var.proxmox_api_url
+  username  = var.proxmox_user
+  password  = var.proxmox_password
+  api_token = var.proxmox_api_token
+
+  ssh {
+    agent    = true
+    username = "root"
+  }
+}
+```
+
+### variables.tf
+
+```hcl
+# --- Proxmox Connection ---
+variable "proxmox_api_url" {
+  description = "URL de l'API Proxmox (ex: https://192.168.1.10:8006)"
+  type        = string
+}
+
+variable "proxmox_user" {
+  description = "Utilisateur Proxmox (ex: root@pam)"
+  type        = string
+  default     = "root@pam"
+}
+
+variable "proxmox_password" {
+  description = "Mot de passe Proxmox (si pas de token)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "proxmox_api_token" {
+  description = "API Token Proxmox (format: user@realm!tokenid=secret)"
+  type        = string
+  sensitive   = true
+}
+
+# --- Cluster Config ---
+variable "cluster_name" {
+  description = "Nom du cluster (préfixe des VMs)"
+  type        = string
+  default     = "k8s"
+}
+
+variable "proxmox_node" {
+  description = "Nom du nœud Proxmox où créer les VMs"
+  type        = string
+}
+
+variable "template_vm_id" {
+  description = "ID du template Cloud-Init (ex: 9000)"
+  type        = number
+  default     = 9000
+}
+
+# --- Network ---
+variable "vm_bridge" {
+  description = "Bridge réseau Proxmox"
+  type        = string
+  default     = "vmbr0"
+}
+
+variable "vm_network_cidr" {
+  description = "Sous-réseau CIDR (ex: 192.168.1.0/24)"
+  type        = string
+  default     = "192.168.1.0/24"
+}
+
+variable "vm_gateway" {
+  description = "Passerelle par défaut"
+  type        = string
+  default     = "192.168.1.1"
+}
+
+variable "vm_dns_servers" {
+  description = "Serveurs DNS"
+  type        = list(string)
+  default     = ["8.8.8.8", "8.8.4.4"]
+}
+
+variable "control_plane_ip" {
+  description = "IP fixe du Control Plane"
+  type        = string
+  default     = "192.168.1.231"
+}
+
+variable "worker_ips" {
+  description = "IPs fixes des Workers"
+  type        = list(string)
+  default     = ["192.168.1.232", "192.168.1.233"]
+}
+
+# --- VM Specs ---
+variable "control_plane_cores" {
+  type    = number
+  default = 4
+}
+
+variable "control_plane_memory" {
+  type    = number
+  default = 4096
+}
+
+variable "worker_cores" {
+  type    = number
+  default = 2
+}
+
+variable "worker_memory" {
+  type    = number
+  default = 4096
+}
+
+variable "vm_disk_size" {
+  description = "Taille disque en Go"
+  type        = number
+  default     = 30
+}
+
+variable "vm_disk_storage" {
+  description = "Storage Proxmox pour les disques"
+  type        = string
+  default     = "local-lvm"
+}
+
+# --- SSH ---
+variable "ssh_public_key" {
+  description = "Clé SSH publique à injecter dans les VMs"
+  type        = string
+}
+
+variable "ssh_user" {
+  description = "Utilisateur SSH (doit matcher le cloud-init du template)"
+  type        = string
+  default     = "ubuntu"
+}
+```
+
+### main.tf
+
+```hcl
+# --- DATA : lire le contenu des fichiers cloud-init ---
+data "local_file" "common_cloudinit" {
+  filename = "${path.module}/../cloud-init/common.yaml"
+}
+
+data "local_file" "cp_cloudinit" {
+  filename = "${path.module}/../cloud-init/control-plane.yaml"
+}
+
+data "local_file" "worker_cloudinit" {
+  filename = "${path.module}/../cloud-init/worker.yaml"
+}
+
+# --- Ressource : Control Plane ---
+resource "proxmox_vm_qemu" "control_plane" {
+  count      = 1
+  vm_id      = 101
+  name       = "${var.cluster_name}-cp"
+  desc       = "Kubernetes Control Plane Node"
+  node       = var.proxmox_node
+  template   = var.template_vm_id
+
+  # Hardware
+  cores   = var.control_plane_cores
+  sockets = 1
+  memory  = var.control_plane_memory
+
+  # Disk
+  disk {
+    storage = var.vm_disk_storage
+    type    = "scsi"
+    size    = "${var.vm_disk_size}G"
+  }
+
+  # Network
+  network {
+    bridge = var.vm_bridge
+    model = "virtio"
+  }
+
+  # Cloud-Init
+  ciuser       = var.ssh_user
+  cipassword   = ""  # On utilise les clés SSH
+  sshkeys      = var.ssh_public_key
+
+  # IP statique
+  ipconfig0 = "ip=${var.control_plane_ip}/24,gw=${var.vm_gateway}"
+
+  # Cloud-init personnalisé (snippets)
+  cloudinit_disk = "scsi2"
+
+  # QEMU Agent (pour récupérer l'IP)
+  agent = 1
+
+  # Démarrage automatique
+  onboot  = true
+  startup = "order=1"
+
+  # Ignorer les changements de cloud-init après le premier apply
+  lifecycle {
+    ignore_changes = [
+      cloudinit_disk,
+      ciuser,
+      cipassword,
+      sshkeys,
+      ipconfig0,
+    ]
+  }
+}
+
+# --- Ressource : Workers ---
+resource "proxmox_vm_qemu" "worker" {
+  count      = 2
+  vm_id      = 102 + count.index
+  name       = "${var.cluster_name}-w${count.index + 1}"
+  desc       = "Kubernetes Worker Node ${count.index + 1}"
+  node       = var.proxmox_node
+  template   = var.template_vm_id
+
+  # Hardware
+  cores   = var.worker_cores
+  sockets = 1
+  memory  = var.worker_memory
+
+  # Disk
+  disk {
+    storage = var.vm_disk_storage
+    type    = "scsi"
+    size    = "${var.vm_disk_size}G"
+  }
+
+  # Network
+  network {
+    bridge = var.vm_bridge
+    model = "virtio"
+  }
+
+  # Cloud-Init
+  ciuser       = var.ssh_user
+  cipassword   = ""
+  sshkeys      = var.ssh_public_key
+
+  # IP statique
+  ipconfig0 = "ip=${var.worker_ips[count.index]}/24,gw=${var.vm_gateway}"
+
+  # QEMU Agent
+  agent = 1
+
+  # Démarrage automatique
+  onboot  = true
+  startup = "order=2"
+
+  lifecycle {
+    ignore_changes = [
+      cloudinit_disk,
+      ciuser,
+      cipassword,
+      sshkeys,
+      ipconfig0,
+    ]
+  }
+}
+```
+
+### outputs.tf
+
+```hcl
+output "control_plane_ip" {
+  value       = var.control_plane_ip
+  description = "IP du nœud Control Plane"
+}
+
+output "worker_ips" {
+  value       = var.worker_ips
+  description = "IPs des nœuds Workers"
+}
+
+output "ssh_command_cp" {
+  value       = "ssh ${var.ssh_user}@${var.control_plane_ip}"
+  description = "Commande SSH pour le Control Plane"
+}
+
+output "ssh_command_w1" {
+  value       = "ssh ${var.ssh_user}@${var.worker_ips[0]}"
+  description = "Commande SSH pour le Worker 1"
+}
+
+output "ssh_command_w2" {
+  value       = "ssh ${var.ssh_user}@${var.worker_ips[1]}"
+  description = "Commande SSH pour le Worker 2"
+}
+
+output "kubeadm_init_hint" {
+  value       = "Exécutez : ./scripts/init-control-plane.sh ${var.control_plane_ip}"
+  description = "Commande pour initialiser le cluster"
+}
+```
+
+### terraform.tfvars.example
+
+```hcl
+# --- Copiez ce fichier en terraform.tfvars et remplissez les valeurs ---
+
+# Connexion Proxmox
+proxmox_api_url    = "https://192.168.1.10:8006"
+proxmox_user       = "root@pam"
+proxmox_password   = ""                                   # Optionnel si token
+proxmox_api_token  = "root@pam!terraform=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Cluster
+cluster_name       = "k8s"
+proxmox_node       = "pve"                                 # Nom du noeud Proxmox
+template_vm_id     = 9000
+
+# Réseau — adaptez à votre lan
+vm_network_cidr    = "192.168.1.0/24"
+vm_gateway         = "192.168.1.1"
+control_plane_ip   = "192.168.1.231"
+worker_ips         = ["192.168.1.232", "192.168.1.233"]
+
+# Matériel
+control_plane_cores  = 4
+control_plane_memory = 4096
+worker_cores         = 2
+worker_memory        = 4096
+vm_disk_size         = 30
+vm_disk_storage      = "local-lvm"
+
+# SSH — collez votre clé publique
+ssh_public_key      = "ssh-ed25519 AAAA... votre@machine"
+ssh_user            = "ubuntu"
 ```
 
 ---
 
-## Configuration Terraform
+## 🌥️ Cloud-Init (préparation des nœuds)
 
-### Variables principales
+Ces fichiers sont exécutés au premier boot de chaque VM et préparent le système pour Kubernetes.
 
-| Variable | Valeur | Description |
-|---|---|---|
-| `proxmox_api_url` | `https://192.168.1.2:8006` | URL API Proxmox |
-| `proxmox_node` | `pve` | Nœud Proxmox |
-| `cluster_name` | `k8s` | Préfixe noms de VMs |
-| `vm_network_cidr` | `192.168.1.0/24` | Sous-réseau VMs (LAN) |
-| `vm_gateway` | `192.168.1.1` | Gateway (routeur du LAN) |
-| `control_plane_ip` | `192.168.1.231` | IP du Control Plane |
-| `worker_ips` | `192.168.1.232, .13` | IPs des Workers |
-| `control_plane_cores` | `2` | vCPU CP |
-| `control_plane_memory` | `4096` | RAM CP (Mo) |
-| `worker_cores` | `1` | vCPU Workers |
-| `worker_memory` | `2048` | RAM Workers (Mo) |
-| `vm_disk_size` | `20` | Disque (Go, thin provisionné) |
+### common.yaml — Préparation commune (tous les nœuds)
 
-> Les secrets sont dans `.env` (fichier exclu du git).
+```yaml
+#cloud-config
+package_update: true
+package_upgrade: true
 
-### Ressources VM
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - conntrack
+  - socat
+  - ebtables
+  - ethtool
+  - nfs-common
+  - ceph-common
+  - glusterfs-client
+  - jq
 
-| VM | vm_id | vCPU | RAM | Disk | IP | Rôle |
-|---|---|---|---|---|---|---|
-| k8s-cp | 101 | 2 | 4 096 Mo | 20 Go | 192.168.1.231 | Control Plane |
-| k8s-w1 | 102 | 1 | 2 048 Mo | 20 Go | 192.168.1.232 | Worker |
-| k8s-w2 | 103 | 1 | 2 048 Mo | 20 Go | 192.168.1.233 | Worker |
+write_files:
+  # --- Kernel modules pour Kubernetes ---
+  - path: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+  # --- Sysctl pour Kubernetes ---
+  - path: /etc/sysctl.d/99-kubernetes.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+  # --- Configuration containerd ---
+  - path: /etc/containerd/config.toml
+    content: |
+      version = 2
+      [plugins]
+        [plugins."io.containerd.grpc.v1.cri"]
+          sandbox_image = "registry.k8s.io/pause:3.9"
+          [plugins."io.containerd.grpc.v1.cri".containerd]
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                runtime_type = "io.containerd.runc.v2"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                  SystemdCgroup = true
+
+  # --- crictl config ---
+  - path: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+
+runcmd:
+  # --- Charger les modules kernel immédiatement ---
+  - modprobe overlay
+  - modprobe br_netfilter
+
+  # --- Appliquer les sysctl ---
+  - sysctl --system
+
+  # --- Désactiver le swap (requis par Kubernetes) ---
+  - swapoff -a
+  - sed -i '/swap/d' /etc/fstab
+
+  # --- Installer containerd ---
+  - apt-get install -y containerd
+
+  # --- Redémarrer containerd avec la config k8s ---
+  - systemctl restart containerd
+  - systemctl enable containerd
+
+  # --- Ajouter le dépôt Kubernetes ---
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+
+  # --- Installer kubeadm, kubelet, kubectl ---
+  - apt-get update
+  - apt-get install -y kubelet kubeadm kubectl
+  - apt-mark hold kubelet kubeadm kubectl
+  - systemctl enable kubelet
+
+  # --- Vérification ---
+  - echo "✅ Node ready for kubeadm init/join"
+```
+
+### control-plane.yaml — Spécifique au Control Plane
+
+```yaml
+#cloud-config
+write_files:
+  # --- kubeadm config pour init ---
+  - path: /etc/kubeadm/kubeadm-config.yaml
+    owner: root:root
+    permissions: '0644'
+    content: |
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kind: InitConfiguration
+      nodeRegistration:
+        criSocket: unix:///run/containerd/containerd.sock
+        kubeletExtraArgs:
+          cgroup-driver: "systemd"
+      ---
+      apiVersion: kubeadm.k8s.io/v1beta3
+      kind: ClusterConfiguration
+      kubernetesVersion: "v1.31"
+      controlPlaneEndpoint: "CP_IP_REPLACE:6443"
+      networking:
+        podSubnet: "10.244.0.0/16"
+        serviceSubnet: "10.96.0.0/12"
+      ---
+      apiVersion: kubelet.config.k8s.io/v1beta1
+      kind: KubeletConfiguration
+      cgroupDriver: "systemd"
+
+runcmd:
+  - echo "✅ Control Plane cloud-init complete. Run kubeadm init manually."
+```
+
+> ⚠️ `CP_IP_REPLACE` sera remplacé dynamiquement par le script `init-control-plane.sh`.
+
+### worker.yaml — Spécifique aux Workers
+
+```yaml
+#cloud-config
+runcmd:
+  - echo "✅ Worker cloud-init complete. Run kubeadm join after CP init."
+```
 
 ---
 
-## Cloud-Init (préparation des nœuds)
-
-Le template unique `cloud-init/user-data.yaml.tpl` est rendu via Terraform `templatefile()` 
-et uploadé comme **snippet Proxmox** (`proxmox_virtual_environment_file`) puis injecté dans chaque VM via `user_data_file_id`.
-Les parties CP-only (InitConfiguration) et Worker-only (JoinConfiguration) sont conditionnées par `is_control_plane`.
-
-Contenu installé sur chaque nœud :
-- Packages système (curl, jq, conntrack, etc.)
-- Kernel modules (overlay, br_netfilter) + sysctl
-- containerd configuré avec SystemdCgroup (config écrite **après** l'install)
-- kubeadm / kubelet / kubectl v1.31
-- Swap désactivé
-- Bash-completion pour kubectl
-
-Le Control Plane reçoit `/etc/kubeadm/kubeadm-config.yaml` avec `InitConfiguration` + `ClusterConfiguration`.
-Les Workers reçoivent `/etc/kubeadm/kubeadm-config.yaml` avec `JoinConfiguration` (token rempli par le script `join-workers.sh`).
-
----
-
-## Déploiement
+## 🚀 Déploiement
 
 ### 1. Configurer les variables
 
 ```bash
-cd proxmox-k8s-lab
+cd /data/CKA/proxmox-k8s-lab/terraform
 
-# Charger les secrets
-source .env
-
-# Copier et éditer le fichier de vars
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-vim terraform/terraform.tfvars
+# Copier et éditer le fichier de variables
+cp terraform.tfvars.example terraform.tfvars
+vim terraform.tfvars
 ```
 
 ### 2. Premier apply Terraform
 
 ```bash
-cd terraform
 terraform init
 terraform plan
 terraform apply
 ```
 
-⏱ Le provisioning prend ~2-3 minutes. Les VMs bootent et exécutent cloud-init
-(packages, containerd, kubeadm) — **comptez ~5-10 min** pour que cloud-init termine.
+⏱ Le provisioning prend ~2-3 minutes. Les VMs bootent et exécutent le cloud-init (installation des paquets, config containerd, etc.) — **comptez ~5-10 min** pour que cloud-init termine sur chaque nœud.
 
 ### 3. Vérifier que les VMs sont prêtes
 
 ```bash
-# IPs dans les outputs Terraform
+# Les IPs sont dans les outputs Terraform
 terraform output
 
-# Vérifier cloud-init sur le CP
+# SSH vers le Control Plane et vérifier que cloud-init a fini
 ssh ubuntu@192.168.1.231 "cloud-init status --wait"
 # → "status: done"
 
-# Vérifier kubeadm
+# Vérifier que kubeadm est installé
 ssh ubuntu@192.168.1.231 "kubeadm version"
 ```
 
+> 💡 Si `cloud-init status` reste en `running`, attendez. Vous pouvez surveiller avec :
+> ```bash
+> ssh ubuntu@192.168.1.231 "tail -f /var/log/cloud-init-output.log"
+> ```
+
 ---
 
-## Initialisation du cluster (kubeadm)
+## 🏗️ Initialisation du cluster (kubeadm)
+
+Une fois les VMs prêtes, lancez le script d'initialisation :
 
 ```bash
-cd proxmox-k8s-lab
+cd /data/CKA/proxmox-k8s-lab
 ./scripts/init-control-plane.sh
 ```
 
 Ce script :
-1. Vérifie que cloud-init est terminé
-2. Remplace `CP_IP_REPLACE` dans la config kubeadm
-3. Lance `kubeadm init`
-4. Installe le CNI **Calico**
-5. Configure kubeconfig pour l'utilisateur `ubuntu`
+1. Initialise le cluster avec `kubeadm init`
+2. Installe le CNI **Calico** (ou Weave, configurable)
+3. Copie le kubeconfig pour l'utilisateur `ubuntu`
+4. Affiche la commande `kubeadm join` pour les workers
 
-### Mode manuel
+### Mode manuel (si vous préférez)
 
 ```bash
+# Sur le Control Plane (SSH)
 ssh ubuntu@192.168.1.231
 
 sudo kubeadm init \
@@ -325,114 +724,163 @@ sudo kubeadm init \
   --apiserver-advertise-address=192.168.1.231 \
   --kubernetes-version=v1.31
 
+# Configurer kubeconfig
 mkdir -p $HOME/.kube
 sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/custom-resources.yaml
+# Installer le CNI Calico
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/tigera-operator.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/custom-resources.yaml
 ```
 
 ---
 
-## Joindre les Workers
+## 🔗 Joindre les Workers
+
+Après l'initialisation du Control Plane, utilisez le script :
 
 ```bash
 ./scripts/join-workers.sh
 ```
 
 Ou manuellement :
+
 ```bash
+# Sur le Control Plane, récupérer le token
 ssh ubuntu@192.168.1.231 "kubeadm token create --print-join-command"
-# Puis sur chaque worker :
-ssh ubuntu@192.168.1.232 "sudo kubeadm join 192.168.1.231:6443 --token xxx --discovery-token-ca-cert-hash sha256:xxx"
-ssh ubuntu@192.168.1.233 "sudo kubeadm join 192.168.1.231:6443 --token xxx --discovery-token-ca-cert-hash sha256:xxx"
+
+# Sur chaque Worker, exécuter la commande affichée
+ssh ubuntu@192.168.1.232 "sudo kubeadm join 192.168.1.231:6443 --token xxxxx --discovery-token-ca-cert-hash sha256:xxxxx"
+ssh ubuntu@192.168.1.233 "sudo kubeadm join 192.168.1.231:6443 --token xxxxx --discovery-token-ca-cert-hash sha256:xxxxx"
 ```
 
 ---
 
-## Vérification
+## ✅ Vérification
 
 ```bash
+# Depuis le Control Plane ou votre machine locale avec kubeconfig
 kubectl get nodes
 # NAME     STATUS   ROLES           AGE   VERSION
 # k8s-cp   Ready    control-plane   5m    v1.31.x
 # k8s-w1   Ready    <none>          2m    v1.31.x
 # k8s-w2   Ready    <none>          2m    v1.31.x
-```
 
-Récupérer le kubeconfig localement :
-```bash
-./scripts/copy-kubeconfig.sh
+# Vérifier les composants du control plane
+kubectl get pods -n kube-system
+
+# Vérifier le CNI
+kubectl get pods -n calico-system
+# ou kubectl get pods -n kube-system | grep calico
+
+# Déployer un pod de test
+kubectl run test-nginx --image=nginx --restart=Never
+kubectl get pods -o wide   # Doit montrer une IP dans le CIDR pod
 ```
 
 ---
 
-## Destruction du lab
+## 🎁 Post-install (optionnel)
+
+### Ingress Controller (NGINX)
 
 ```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+```
+
+### Metrics Server
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# Si les certificats auto-signés posent problème :
+kubectl patch deployment metrics-server -n kube-system --type='json' -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+```
+
+### Kubeadm : configurer le auto-completion
+
+```bash
+# Sur chaque nœud
+echo 'source <(kubeadm completion bash)' >> ~/.bashrc
+echo 'source <(kubectl completion bash)' >> ~/.bashrc
+alias k=kubectl
+complete -o default -F __start_kubectl k
+```
+
+---
+
+## 💣 Destruction du lab
+
+```bash
+cd /data/CKA/proxmox-k8s-lab
+
 # Script complet (reset kubeadm + destroy TF)
 ./scripts/destroy-cluster.sh
 
 # Ou Terraform uniquement
-cd terraform && terraform destroy
+cd terraform
+terraform destroy
 ```
 
 ---
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
 | Problème | Solution |
 |----------|----------|
-| **VM stuck "waiting for IP"** | Vérifier qemu-guest-agent dans le template : `qm agent <vmid> ping` |
+| **VM stuck "waiting for IP"** | Vérifier que `qemu-guest-agent` est installé dans le template. Sur le nœud Proxmox : `qm agent <vmid> ping` |
 | **`kubeadm init` échoue : swap actif** | `ssh ubuntu@IP "sudo swapoff -a && sudo sed -i '/swap/d' /etc/fstab"` |
-| **Nodes `NotReady`** | Vérifier le CNI : `kubectl get pods -n calico-system` |
-| **VMs pas d'internet** | Vérifier gateway : `ip route` doit montrer 192.168.1.1 |
-| **Cloud-init ne s'exécute pas** | `cat /var/log/cloud-init.log` ou `sudo cloud-init clean && sudo reboot` |
-| **Terraform : erreur snippet upload** | Vérifier `pvesm set local --content iso,vmtmpl,backup,snippets` |
-| **Terraform : erreur disk size** | Le disque du template doit être plus petit que la taille cible |
+| **`[ERROR Swap]: running with swap on is not supported`** | Même chose — le cloud-init devrait l'avoir fait, vérifiez qu'il a terminé |
+| **Nodes `NotReady`** | Vérifier le CNI : `kubectl get pods -n kube-system -l k8s-app=calico-node`. Vérifier les logs : `kubectl logs -n kube-system <calico-pod>` |
+| **CrashLoopBackOff kube-proxy** | Vérifier la config réseau : `kubectl logs -n kube-system <kube-proxy-pod>` |
+| **`containerd` pas démarré** | `ssh ubuntu@IP "sudo systemctl restart containerd && sudo systemctl status containerd"` |
+| **`kubeadm join` : token expiré** | Régénérer : `ssh ubuntu@CP_IP "kubeadm token create --print-join-command"` |
+| **Cloud-init ne s'exécute pas** | Vérifier : `cat /var/log/cloud-init.log`. Reset : `sudo cloud-init clean && sudo reboot` |
+| **Proxmox API inaccessible** | Vérifier l'URL, le token, et que l'API est bien sur le port 8006 avec HTTPS |
+| **Terraform : `disk size` error** | Le disque du template doit être plus petit que la taille désirée. Sinon utiliser `resize_disk` |
 
-### Reset complet d'un nœud
+### Reset complet d'un nœud (pour repartir de zéro)
 
 ```bash
+# Sur le nœud à reset
 sudo kubeadm reset -f
 sudo rm -rf /etc/kubernetes /var/lib/kubelet /var/lib/etcd /etc/cni/net.d
 sudo iptables -F && sudo iptables -t nat -F && sudo iptables -t mangle -F && sudo iptables -X
+sudo ipvsadm --clear
 ```
 
 ---
 
-## Cheat sheet
+## 📌 Résumé rapide (cheat sheet workflow)
 
 ```bash
-# 1. Charger les secrets
-source .env
+# 1. Préparer
+cp terraform.tfvars.example terraform.tfvars && vim terraform.tfvars
 
-# 2. Configurer
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars && vim terraform/terraform.tfvars
-
-# 3. Provisionner
+# 2. Provisionner
 cd terraform && terraform init && terraform apply -auto-approve
 
-# 4. Attendre cloud-init
-ssh ubuntu@192.168.1.231 "cloud-init status --wait"
+# 3. Attendre cloud-init (~5-10 min)
+ssh ubuntu@CP_IP "cloud-init status --wait"
 
-# 5. Init cluster
+# 4. Initialiser le cluster
 ./scripts/init-control-plane.sh
 
-# 6. Join workers
+# 5. Joindre les workers
 ./scripts/join-workers.sh
 
-# 7. Kubeconfig local
+# 6. Récupérer kubeconfig localement
 ./scripts/copy-kubeconfig.sh
 
-# 8. Vérifier
+# 7. Vérifier
 kubectl get nodes
 
-# Détruire
+# 🎯 C'est prêt ! Practicez pour la CKA !
+
+# 💣 Pour tout détruire
 ./scripts/destroy-cluster.sh
 ```
 
 ---
 
-> **Tip CKA :** Montez et détruisez ce cluster régulièrement. C'est exactement le type de tâche testée à l'examen (kubeadm init/join, troubleshooting de nœuds NotReady, etc.).
+> 🚀 **Tip CKA :** Montez et détruisez ce cluster régulièrement. C'est exactement le type de tâche testée à l'examen (kubeadm init/join, troubleshooting de nœuds NotReady, etc.). La répétition est la clé !

@@ -5,13 +5,19 @@
 # =============================================================
 set -euo pipefail
 
-# --- Config (from common.sh: terraform output preferred, tfvars fallback) ---
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "${SCRIPT_DIR}/common.sh"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+TFVARS="${PROJECT_DIR}/terraform/terraform.tfvars"
 
-# CLI override
+# --- Config ---
 if [ -n "${1:-}" ]; then
   CP_IP="$1"
+elif [ -f "$TFVARS" ]; then
+  CP_IP=$(grep -E '^control_plane_ip' "$TFVARS" | sed 's/.*=.*"\(.*\)".*/\1/' | tr -d '"')
+  SSH_USER=$(grep -E '^ssh_user' "$TFVARS" | sed 's/.*=.*"\(.*\)".*/\1/' | tr -d '"' || echo "ubuntu")
+else
+  CP_IP="192.168.1.231"
+  SSH_USER="ubuntu"
 fi
 
 KUBECONFIG_LOCAL="${HOME}/.kube/config.k8s-lab"

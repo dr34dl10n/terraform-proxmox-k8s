@@ -1,0 +1,111 @@
+#cloud-config
+# =============================================================
+# Cloud-Init Worker — Préparation complète d'un nœud Worker
+# Common + spécifique Worker
+# =============================================================
+
+disable_root: false
+ssh_pwauth: false
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - conntrack
+  - socat
+  - ebtables
+  - ethtool
+  - nfs-common
+  - jq
+  - vim
+  - bash-completion
+
+write_files:
+  # --- Modules kernel requis par Kubernetes ---
+  - path: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+  # --- Paramètres sysctl pour le networking Kubernetes ---
+  - path: /etc/sysctl.d/99-kubernetes.conf
+    content: |
+      net.bridge.bridge-nf-call-iptables  = 1
+      net.bridge.bridge-nf-call-ip6tables = 1
+      net.ipv4.ip_forward                 = 1
+
+  # --- Configuration containerd avec systemd cgroup driver ---
+  - path: /etc/containerd/config.toml
+    content: |
+      version = 2
+      [plugins]
+        [plugins."io.containerd.grpc.v1.cri"]
+          sandbox_image = "registry.k8s.io/pause:3.9"
+          [plugins."io.containerd.grpc.v1.cri".containerd]
+            [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
+              [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
+                runtime_type = "io.containerd.runc.v2"
+                [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+                  SystemdCgroup = true
+
+  # --- crictl config ---
+  - path: /etc/crictl.yaml
+    content: |
+      runtime-endpoint: unix:///run/containerd/containerd.sock
+      image-endpoint: unix:///run/containerd/containerd.sock
+      timeout: 10
+      debug: false
+
+runcmd:
+  # --- Charger les modules kernel ---
+  - modprobe overlay
+  - modprobe br_netfilter
+
+  # --- Appliquer les sysctl ---
+  - sysctl --system
+
+  # --- Désactiver le swap (OBLIGATOIRE pour Kubernetes) ---
+  - swapoff -a
+  - sed -i '/swap/d' /etc/fstab
+
+  # --- Installer containerd ---
+  - apt-get install -y containerd
+
+  # --- Redémarrer containerd avec la bonne config ---
+  - systemctl restart containerd
+  - systemctl enable containerd
+
+  # --- Ajouter la clé GPG du dépôt Kubernetes ---
+  - mkdir -p /etc/apt/keyrings
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+  # --- Ajouter le dépôt Kubernetes ---
+  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+
+  # --- Installer kubeadm, kubelet, kubectl ---
+  - apt-get update
+  - apt-get install -y kubelet kubeadm kubectl
+  - apt-mark hold kubelet kubeadm kubectl containerd
+
+  # --- Activer kubelet ---
+  - systemctl enable kubelet
+
+  # --- Activer bash-completion pour kubectl ---
+  - echo 'source <(kubectl completion bash)' >> /home/ubuntu/.bashrc
+  - echo 'alias k=kubectl' >> /home/ubuntu/.bashrc
+  - echo 'complete -o default -F __start_kubectl k' >> /home/ubuntu/.bashrc
+
+  # --- Message de fin ---
+  - echo "========================================="
+  - echo "✅ Worker cloud-init: DONE"
+  - echo "✅ containerd: configured (systemd cgroup)"
+  - echo "✅ kubeadm/kubelet/kubectl: installed (v1.31)"
+  - echo "✅ swap: disabled"
+  - echo "✅ kernel modules: loaded"
+  - echo "⏳ Next: run kubeadm join (or join-workers.sh)"
+  - echo "========================================="
