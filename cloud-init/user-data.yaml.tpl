@@ -12,7 +12,7 @@ disable_root: false
 ssh_pwauth: false
 
 package_update: true
-package_upgrade: ${package_upgrade}
+package_upgrade: false
 
 packages:
   - apt-transport-https
