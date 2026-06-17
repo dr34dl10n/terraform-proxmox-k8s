@@ -63,17 +63,52 @@ echo "✅ kubeadm init terminé !"
 # --- 4. Installer le CNI (Calico) ---
 echo "🌐 Installation du CNI Calico..."
 ssh "${SSH_USER}@${CP_IP}" << 'CNI_EOF'
-export KUBECONFIG=/etc/kubernetes/admin.conf
+export KUBECONFIG=$HOME/.kube/config
+set -e
 
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/custom-resources.yaml
-echo "✅ Calico CNI installé"
+# --- Installation du tigera-operator ---
+# server-side apply OBLIGATOIRE ici : le CRD installations.operator.tigera.io a un
+# schéma OpenAPI si volumineux que l'annotation `last-applied-configuration` (écrite
+# par `kubectl apply` client-side) dépasse la limite K8s de 256 KB sur les annotations
+# → "metadata.annotations: Too long: must have at most 262144 bytes".
+# `--server-side` gère l'appartenance via managedFields (pas d'annotation) et reste
+# idempotent (re-run sans reset OK). `--force-conflicts` = no-op si pas de conflit.
+kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
+
+# --- Attendre que le CRD "Installation" soit établi avant d'appliquer la CR ---
+# Sinon race condition : `kubectl apply` retourne avant que l'API server ne serve
+# le nouveau kind → "no matches for kind Installation in version operator.tigera.io/v1"
+echo "⏳ Attente de l'établissement du CRD installations.operator.tigera.io..."
+timeout 120 bash -c 'until kubectl get crd installations.operator.tigera.io >/dev/null 2>&1; do sleep 1; done'
+kubectl wait --for=condition=Established --timeout=120s crd/installations.operator.tigera.io
+
+# Appliquer custom-resources avec le CIDR correct (10.244.0.0/16 au lieu du default 192.168.0.0/16)
+# ⚠️ natOutgoing doit être une CHAÎNE ("Enabled"/"Disabled"), pas un booléen (true/false)
+#     sinon l'API tigera-operator rejette la CR et Calico n'est jamais configuré.
+kubectl apply -f - <<CALICO_CR
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    ipPools:
+    - blockSize: 26
+      cidr: 10.244.0.0/16
+      encapsulation: VXLAN
+      natOutgoing: Enabled
+      nodeSelector: all()
+CALICO_CR
+
+echo "✅ Calico CNI: tigera-operator + Installation appliqués (pod CIDR=10.244.0.0/16)"
+echo "⏳ L'opérateur reconciled en cours — patientez ~1-3 min avant que les nodes passent Ready."
+echo "   Vérif: kubectl get nodes -w  |  kubectl get pods -A | grep -E 'tigera|calico'"
 CNI_EOF
 
 # --- 5. Installer le metrics-server ---
 echo "📊 Installation du metrics-server..."
 ssh "${SSH_USER}@${CP_IP}" << 'METRICS_EOF'
-export KUBECONFIG=/etc/kubernetes/admin.conf
+export KUBECONFIG=$HOME/.kube/config
 
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 # Patch : kubelet-insecure-tls nécessaire en lab (certs auto-signés)
