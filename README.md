@@ -597,8 +597,8 @@ runcmd:
   - systemctl enable containerd
 
   # --- Ajouter le dépôt Kubernetes ---
-  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
 
   # --- Installer kubeadm, kubelet, kubectl ---
   - apt-get update
@@ -629,7 +629,7 @@ write_files:
       ---
       apiVersion: kubeadm.k8s.io/v1beta3
       kind: ClusterConfiguration
-      kubernetesVersion: "v1.31"
+      kubernetesVersion: "v1.35"
       controlPlaneEndpoint: "CP_IP_REPLACE:6443"
       networking:
         podSubnet: "10.244.0.0/16"
@@ -722,7 +722,7 @@ ssh ubuntu@192.168.1.231
 sudo kubeadm init \
   --pod-network-cidr=10.244.0.0/16 \
   --apiserver-advertise-address=192.168.1.231 \
-  --kubernetes-version=v1.31
+  --kubernetes-version=v1.35
 
 # Configurer kubeconfig
 mkdir -p $HOME/.kube
@@ -730,8 +730,8 @@ sudo cp /etc/kubernetes/admin.conf $HOME/.kube/config
 sudo chown $(id -u):$(id -g) $HOME/.kube/config
 
 # Installer le CNI Calico
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/tigera-operator.yaml
-kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/custom-resources.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/tigera-operator.yaml
+kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/custom-resources.yaml
 ```
 
 ---
@@ -763,9 +763,9 @@ ssh ubuntu@192.168.1.233 "sudo kubeadm join 192.168.1.231:6443 --token xxxxx --d
 # Depuis le Control Plane ou votre machine locale avec kubeconfig
 kubectl get nodes
 # NAME     STATUS   ROLES           AGE   VERSION
-# k8s-cp   Ready    control-plane   5m    v1.31.x
-# k8s-w1   Ready    <none>          2m    v1.31.x
-# k8s-w2   Ready    <none>          2m    v1.31.x
+# k8s-cp   Ready    control-plane   5m    v1.35.x
+# k8s-w1   Ready    <none>          2m    v1.35.x
+# k8s-w2   Ready    <none>          2m    v1.35.x
 
 # Vérifier les composants du control plane
 kubectl get pods -n kube-system

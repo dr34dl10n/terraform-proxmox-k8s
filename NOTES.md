@@ -164,7 +164,7 @@ terraform taint       # Force la recréation d'une ressource
 
 | Paramètre | Valeur |
 |---|---|
-| **Version K8s** | v1.31 |
+| **Version K8s** | v1.35 |
 | **CRI** | containerd (SystemdCgroup = true) |
 | **Cgroup driver** | systemd |
 | **CNI** | Calico v3.27 |

@@ -85,7 +85,7 @@ write_files:
       ---
       apiVersion: kubeadm.k8s.io/v1beta4
       kind: ClusterConfiguration
-      kubernetesVersion: "v1.31.0"
+      kubernetesVersion: "v${kubernetes_version}"
       controlPlaneEndpoint: "CP_IP_REPLACE:6443"
       networking:
         podSubnet: "10.244.0.0/16"
@@ -158,10 +158,10 @@ runcmd:
 
   # --- Ajouter la clé GPG du dépôt Kubernetes ---
   - mkdir -p /etc/apt/keyrings
-  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  - curl -fsSL https://pkgs.k8s.io/core:/stable:/v${kubernetes_version}/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
   # --- Ajouter le dépôt Kubernetes ---
-  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
+  - echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${kubernetes_version}/deb/ /' | tee /etc/apt/sources.list.d/kubernetes.list
 
   # --- Installer kubeadm, kubelet, kubectl ---
   - apt-get update
@@ -197,7 +197,7 @@ runcmd:
   - 'echo "✅ Worker cloud-init: DONE"'
 %{ endif }
   - 'echo "✅ containerd: configured (systemd cgroup)"'
-  - 'echo "✅ kubeadm/kubelet/kubectl: installed (v1.31)"'
+  - 'echo "✅ kubeadm/kubelet/kubectl: installed (v${kubernetes_version})"'
   - 'echo "✅ swap: disabled"'
   - 'echo "✅ kernel modules: loaded"'
 %{ if is_control_plane }

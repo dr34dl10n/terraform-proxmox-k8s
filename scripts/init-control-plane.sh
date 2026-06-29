@@ -73,7 +73,7 @@ set -e
 # → "metadata.annotations: Too long: must have at most 262144 bytes".
 # `--server-side` gère l'appartenance via managedFields (pas d'annotation) et reste
 # idempotent (re-run sans reset OK). `--force-conflicts` = no-op si pas de conflit.
-kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/tigera-operator.yaml
+kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/tigera-operator.yaml
 
 # --- Attendre que le CRD "Installation" soit établi avant d'appliquer la CR ---
 # Sinon race condition : `kubectl apply` retourne avant que l'API server ne serve

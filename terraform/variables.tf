@@ -32,6 +32,16 @@ variable "template_vm_id" {
   default     = 9001
 }
 
+# --- Kubernetes ---
+# Version mineure (ex: "1.35") alignée sur celle utilisée lors de l'examen CKA
+# (cf. curriculum CNCF : CKA_Curriculum_v<mineure>.pdf).
+# Sert à : configurer le dépôt apt pkgs.k8s.io et le kubernetesVersion de kubeadm.
+variable "kubernetes_version" {
+  description = "Version Kubernetes (mineure, ex: 1.35) — alignée sur l'examen CKA"
+  type        = string
+  default     = "1.35"
+}
+
 # --- Network ---
 variable "vm_bridge" {
   description = "Bridge réseau Proxmox"

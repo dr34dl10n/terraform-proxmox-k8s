@@ -11,6 +11,7 @@ locals {
     node_type        = "Control Plane"
     package_upgrade  = false
     hostname         = "${var.cluster_name}-cp"
+    kubernetes_version = var.kubernetes_version
   })
 
   worker_user_data = {
@@ -20,6 +21,7 @@ locals {
       node_type        = "Worker"
       package_upgrade  = false
       hostname         = "${var.cluster_name}-w${i + 1}"
+      kubernetes_version = var.kubernetes_version
     })
   }
 }
